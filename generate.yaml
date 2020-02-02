@@ -1,0 +1,119 @@
+---
+- hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Check if tags is not float
+      assert:
+        that:
+          - "'float' not in reexported_images|json_query('[].*[][]')|map('type_debug')"
+
+    - name: Create a directory for export
+      become: true
+      file:
+        path: "{{ directory }}"
+        state: directory
+      with_items: '{{ reexported_images }}'
+      loop_control:
+        label: "{{ directory }}"
+      vars:
+        directory: '{{ docker_images_dir }}/{{ item.name|replace (".", "_") }}'
+
+    - name: Create directory for registry structure
+      become: true
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - '{{ registry_blobs_dir }}'
+        - '{{ registry_manifests_dir }}'
+        - '{{ registry_tags_dir }}'
+
+  tasks:
+    - name: Archive image of interest into local directory
+      become: true
+      command:
+        cmd: "skopeo copy docker://{{ container }} dir:{{ filename }}"
+        creates: "{{ filename }}"
+      loop_control:
+        label: "{{ item.0.name }}:{{ item.1 }}"
+      with_subelements:
+        - '{{ reexported_images }}'
+        - tags
+      vars:
+        filename: '{{ docker_images_dir }}/{{ item.0.name|replace (".", "_") }}/{{ item.1|replace (".", "_") }}'
+        container: '{{ item.0.name }}:{{ item.1 }}'
+
+    - name: Hardlink image blobs
+      become: true
+      synchronize:
+        src: "{{ filename }}/"
+        dest: "{{ registry_blobs_dir }}/"
+        link_dest: "{{ filename }}/"
+        rsync_opts:
+          - "--exclude=manifest.json"
+          - "--exclude=version"
+      loop_control:
+        label: "{{ item.0.name }}:{{ item.1 }}"
+      with_subelements:
+        - '{{ reexported_images }}'
+        - tags
+      vars:
+        filename: '{{ docker_images_dir }}/{{ item.0.name|replace (".", "_") }}/{{ item.1|replace (".", "_") }}'
+        container: '{{ item.0.name }}:{{ item.1 }}'
+
+    - name: Get manifest digest
+      become: true
+      command:
+        cmd: "skopeo manifest-digest {{ filename }}/manifest.json"
+      register: manifest_digest
+      changed_when: false
+      loop_control:
+        label: "{{ item.0.name }}:{{ item.1 }}"
+      with_subelements:
+        - '{{ reexported_images }}'
+        - tags
+      vars:
+        filename: '{{ docker_images_dir }}/{{ item.0.name|replace (".", "_") }}/{{ item.1|replace (".", "_") }}'
+        container: '{{ item.0.name }}:{{ item.1 }}'
+
+    - name: Generate docker images hash map
+      set_fact:
+        docker_v2: "{{ docker_v2|default([])|combine({ image: sha256 }) }}"
+        manifest: "{{ manifest|default([])|combine({ filename: sha256 }) }}"
+      loop_control:
+        label: "{{ image }}"
+      with_items: "{{ manifest_digest|json_query('results[*]') }}"
+      vars:
+        image: "{{ item|json_query('item[0].name') }}:{{ item|json_query('item[1]') }}"
+        filename: "{{ item|json_query('cmd[2]') }}"
+        sha256: "{{ item|json_query('stdout')|replace('sha256:', '') }}"
+
+    - name: Hardlink manifest files
+      file:
+        src: "{{ filename }}"
+        dest: "{{ registry_manifests_dir }}/{{ sha256 }}.json"
+        state: hard
+      loop_control:
+        label: "{{ image }}"
+      with_items: "{{ manifest_digest|json_query('results[*]') }}"
+      vars:
+        image: "{{ item|json_query('item[0].name') }}:{{ item|json_query('item[1]') }}"
+        filename: "{{ item|json_query('cmd[2]') }}"
+        sha256: "{{ item|json_query('stdout')|replace('sha256:', '') }}"
+
+    - name: Generate tags
+      with_items: '{{ reexported_images }}'
+      copy:
+        content: "{{ image|to_json }}"
+        dest: "{{ registry_tags_dir }}/{{ item.name|hash('md5') }}.json"
+      loop_control:
+        label: '{{ item.name }}'
+      vars:
+        image:
+          name: '{{ item.name }}'
+          tags: '{{ item.tags }}'
+
+    - name: Create db file
+      copy:
+        content: "{{ docker_v2|to_json }}"
+        dest: "{{ registry_dir }}/images.json"

@@ -1,0 +1,36 @@
+---
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  vars:
+    working_dir: /home/artifacts
+    docker_images_dir: '{{ working_dir }}/docker_images'
+    registry_dir: '{{ working_dir }}/v2'
+    registry_blobs_dir: '{{ registry_dir }}/blobs'
+    registry_manifests_dir: '{{ registry_dir }}/manifests'
+    registry_tags_dir: '{{ registry_dir }}/tags'
+    reexported_images:
+     - name: 'nginx'
+       tags:
+        - 1.16.1-alpine
+        - alpine
+     - name: 'prom/prometheus'
+       tags:
+        - v2.15.2
+     - name: 'prom/node-exporter'
+       tags:
+        - v0.18.1
+     - name: 'prom/alertmanager'
+       tags:
+        - v0.20.0
+     - name: 'k8s.gcr.io/pause'
+       tags:
+        - '3.1'
+        - '3.0'
+     - name: 'coredns/coredns'
+       tags:
+        - '1.6.6'
+     - name: 'quay.io/coreos/flannel'
+       tags:
+        - v0.11.0
