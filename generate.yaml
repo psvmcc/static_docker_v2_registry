@@ -80,10 +80,12 @@
       set_fact:
         docker_v2: "{{ docker_v2|default([])|combine({ image: sha256 }) }}"
         manifest: "{{ manifest|default([])|combine({ filename: sha256 }) }}"
+        repos: "{{ repos|default([]) + [ repo ] }}"
       loop_control:
         label: "{{ image }}"
       with_items: "{{ manifest_digest|json_query('results[*]') }}"
       vars:
+        repo: "{{ item|json_query('item[0].name') }}"
         image: "{{ item|json_query('item[0].name') }}:{{ item|json_query('item[1]') }}"
         filename: "{{ item|json_query('cmd[2]') }}"
         sha256: "{{ item|json_query('stdout')|replace('sha256:', '') }}"
@@ -117,3 +119,11 @@
       copy:
         content: "{{ docker_v2|to_json }}"
         dest: "{{ registry_dir }}/images.json"
+
+    - name: Create catalog file
+      copy:
+        content: "{{ catalog|to_json }}"
+        dest: "{{ registry_dir }}/catalog.json"
+      vars:
+        catalog:
+          repositories: "{{ repos|unique }}"
